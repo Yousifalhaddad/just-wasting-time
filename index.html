@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>System Firmware Utility</title>
+<style>
+  :root{
+    --fg:#8aff8a;
+    --fg-dim:#4cc44c;
+    --bg:#000;
+    --accent:#ff2a2a;
+    --amber:#ffde59;
+    --muted:#7b7b7b;
+    --mono:"Courier New", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:var(--mono);}
+  *{box-sizing:border-box}
+
+  .wrap{min-height:100%;display:flex;align-items:flex-start;}
+  .screen{padding:22px 24px 140px; width:100%; font-size:16px; line-height:1.35; position:relative;}
+  .hdr{color:var(--fg-dim);margin-bottom:6px}
+  .sep{color:var(--muted)}
+  .cursor{display:inline-block;width:10px;height:1.1em;background:var(--fg);margin-left:4px;animation:blink 1s steps(2,end) infinite;vertical-align:baseline}
+  @keyframes blink{50%{background:transparent}}
+
+  #log>div{white-space:pre-wrap}
+  .bar{margin-top:18px;font-size:14px}
+  .bar .track{display:inline-block;min-width:300px;border:1px solid var(--fg-dim);padding:0 2px}
+  .bar .fill{display:inline-block;white-space:pre}
+
+  .dim{color:var(--muted)}
+  .warn{color:var(--amber)}
+  .err{color:var(--accent)}
+
+  /* CRT scanline + vignette */
+  .fx::before{content:"";position:fixed;inset:0;pointer-events:none;background:
+    repeating-linear-gradient( to bottom, rgba(255,255,255,.03), rgba(255,255,255,.03) 1px, transparent 2px, transparent 3px );
+    mix-blend-mode:overlay;opacity:.2}
+  .fx::after{content:"";position:fixed;inset:0;pointer-events:none;background:
+    radial-gradient(ellipse at center, transparent 0%, transparent 55%, rgba(0,0,0,.25) 85%, rgba(0,0,0,.55) 100%);
+  }
+
+  .glitch{animation:glitch 0.9s steps(2,end) infinite}
+  @keyframes glitch{
+    10%{text-shadow:1px 0 var(--accent), -1px 0 var(--amber)}
+    20%{text-shadow:0 0}
+    30%{text-shadow:-1px 0 var(--accent), 1px 0 var(--amber)}
+    40%{text-shadow:0 0}
+  }
+
+  .shake{animation:shake 0.35s linear}
+  @keyframes shake{
+    0%{transform:translateX(0)}
+    25%{transform:translateX(-3px)}
+    50%{transform:translateX(3px)}
+    75%{transform:translateX(-2px)}
+    100%{transform:translateX(0)}
+  }
+
+  /* Overlay prompt */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;z-index:5}
+  .card{border:1px solid var(--fg-dim);padding:18px 20px;max-width:560px}
+  .card h1{font-size:18px;margin:0 0 8px}
+  .btn{display:inline-block;border:1px solid var(--fg);padding:6px 10px;margin-top:10px;text-decoration:none;color:var(--fg);cursor:pointer}
+  .btn:active{transform:translateY(1px)}
+
+  /* Red screen of dread */
+  .rsod{position:fixed;inset:0;background:#200;border-top:6px solid var(--accent);color:#fff;display:none;z-index:9;align-items:center;justify-content:center;text-align:center;padding:20px}
+  .rsod .inner{max-width:720px}
+  .rsod h2{font-size:28px;margin:0 0 8px}
+  .rsod p{opacity:.8}
+
+  /* New: flash effect for panic */
+  .flash{animation:flash 0.09s linear infinite}
+  @keyframes flash{0%{filter:brightness(1)}50%{filter:brightness(1.35)}100%{filter:brightness(1)}}
+
+  /* Windows-like boot (black) */
+  .winboot{position:fixed;inset:0;display:none;z-index:12;background:#000;color:#fff;font-family:"Segoe UI Variable", "Segoe UI", SegoeUI, system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;align-items:center;justify-content:center;flex-direction:column;text-align:center}
+  .winboot .logo{width:68px;height:68px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:6px;margin-bottom:18px}
+  .winboot .logo div{background:#00a4ef}
+  .winboot .msg{font-size:16px;opacity:.9;margin-top:18px}
+  .winboot .sub{font-size:14px;opacity:.7;margin-top:6px}
+
+  /* Windows spinner (5 dots) */
+  .win-spinner{position:relative;width:60px;height:60px;margin-top:14px}
+  .win-spinner i{position:absolute;left:50%;top:50%;width:6px;height:6px;background:#fff;border-radius:50%;transform-origin:-22px 0}
+  .win-spinner i:nth-child(1){animation:spin 1.4s linear infinite;transform:rotate(0deg) translate(-22px,0)}
+  .win-spinner i:nth-child(2){animation:spin 1.4s linear infinite .14s;transform:rotate(72deg) translate(-22px,0)}
+  .win-spinner i:nth-child(3){animation:spin 1.4s linear infinite .28s;transform:rotate(144deg) translate(-22px,0)}
+  .win-spinner i:nth-child(4){animation:spin 1.4s linear infinite .42s;transform:rotate(216deg) translate(-22px,0)}
+  .win-spinner i:nth-child(5){animation:spin 1.4s linear infinite .56s;transform:rotate(288deg) translate(-22px,0)}
+  @keyframes spin{to{transform:rotate(360deg) translate(-22px,0)}}
+
+  /* Windows Recovery (blue) */
+  .winre{position:fixed;inset:0;display:none;z-index:10;background:#0C59A4;color:#fff;font-family:"Segoe UI Variable", "Segoe UI", SegoeUI, system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;align-items:center;justify-content:center;flex-direction:column;text-align:left;padding:40px}
+  .winre .title{font-size:28px;font-weight:400;letter-spacing:.2px;margin:0 0 14px;width:min(680px,90vw)}
+  .winre .body{font-size:16px;opacity:.95;line-height:1.45;margin:0 0 16px;width:min(680px,90vw)}
+  .winre .buttons{display:flex;gap:10px;margin-top:8px}
+  .winre .btn{appearance:none;border:1px solid rgba(255,255,255,.8);background:transparent;color:#fff;padding:6px 16px;font-size:14px;cursor:default;opacity:.95}
+  .winre .btn.secondary{border-color:rgba(255,255,255,.5);opacity:.85}
+  .winre .spinner{margin-top:18px}
+
+  /* Footer help hint */
+  .hint{position:fixed;left:0;right:0;bottom:0;color:#bbb;background:rgba(0,0,0,.7);border-top:1px dashed #333;font-size:12px;padding:6px 10px}
+
+  /* Panic countdown badge */
+  #panicCounter{position:fixed;top:10px;right:12px;background:rgba(0,0,0,.6);color:#ffde59;padding:6px 10px;border:1px solid #444;font-family:var(--mono);z-index:12;display:none}
+</style>
+</head>
+<body class="fx">
+<div class="wrap">
+  <div class="screen" id="scr">
+    <div class="hdr" id="hdr">System Firmware Utility v2.31.00</div>
+    <div class="dim" id="build">Build: <span id="buildDate"></span></div>
+    <div class="sep">===========================================</div>
+    <div id="log" aria-live="polite" aria-atomic="false"></div>
+    <div class="bar" id="bar"><span class="track">[<span class="fill" id="fill">                    </span>]</span> <span id="pct">0%</span></div>
+    <div style="margin-top:18px" class="dim">Press <b>ESC</b> to abort integrity check.</div>
+  </div>
+  <div class="cursor" id="cur" aria-hidden="true"></div>
+</div>
+
+<!-- Start overlay to allow audio & fullscreen -->
+<div class="overlay" id="gate">
+  <div class="card">
+    <h1>Device entered maintenance mode</h1>
+    <div class="dim">A routine integrity check is required. Screen may flicker.</div>
+    <div><a class="btn" id="startBtn">Begin diagnostic</a></div>
+    <div class="dim" style="margin-top:10px">Tip: For best effect, enable fullscreen when asked.</div>
+  </div>
+</div>
+
+<div class="rsod" id="rsod">
+  <div class="inner">
+    <h2>FIRMWARE FAULT: 0x0000DEAD</h2>
+    <p>Critical exception raised in secure environment. Manual intervention required.</p>
+    <p class="dim">Hold power for 10 seconds to force reboot. If this persists, contact your administrator.</p>
+  </div>
+</div>
+
+<!-- Windows-like boot overlay (black) -->
+<div class="winboot" id="winboot">
+  <div class="logo" aria-hidden="true"><div></div><div></div><div></div><div></div></div>
+  <div class="win-spinner" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="msg" id="bootMsg">Preparing Automatic Repair</div>
+  <div class="sub" id="bootSub">Please don't turn off your device</div>
+</div>
+
+<!-- Windows-like recovery overlay (blue) -->
+<div class="winre" id="winre">
+  <div class="title">Automatic Repair</div>
+  <div class="body" id="reBody">Your PC did not start correctly.<br>Press <b>Restart</b> to restart your PC, which can sometimes fix the problem. You can also press <b>Advanced options</b> to try other options to repair your PC.</div>
+  <div class="buttons">
+    <button class="btn">Restart</button>
+    <button class="btn secondary">Advanced options</button>
+  </div>
+  <div class="spinner win-spinner" aria-hidden="true" style="margin-top:24px"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="body" style="opacity:.8; margin-top:10px">Please don't turn off your device</div>
+</div>
+
+<div class="hint" id="hint">Hidden exit: press <b>Ctrl+X</b> three times quickly. No data is touched — this is a prank simulation.</div>
+<div id="panicCounter">00:20</div>
+
+<script>
+const TUNE = {
+  totalDurationMs: 140000,
+  phaseWeights: [0.18,0.22,0.35,0.15,0.10],
+  minTypeDelay: 6,
+  maxTypeDelay: 20,
+  stallChance: 0.11,
+  sfxEnabled: true,
+  redScreenAtEnd: true
+};
+
+// ——— helpers ———
+const scr = document.getElementById('scr');
+const logEl = document.getElementById('log');
+const fill = document.getElementById('fill');
+const pct = document.getElementById('pct');
+const hdr = document.getElementById('hdr');
+const buildDate = document.getElementById('buildDate');
+const gate = document.getElementById('gate');
+const startBtn = document.getElementById('startBtn');
+const rsod = document.getElementById('rsod');
+const winre = document.getElementById('winre');
+const winboot = document.getElementById('winboot');
+const panicCounter = document.getElementById('panicCounter');
+
+buildDate.textContent = new Date().toISOString().slice(0,10);
+
+const STATE = { panic:false };
+
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+function rand(a,b){return Math.random()*(b-a)+a}
+function chance(p){return Math.random()<p}
+function clamp(x,a,b){return Math.max(a,Math.min(b,x))}
+function scrollToBottom(){window.scrollTo({top:document.body.scrollHeight, behavior:'instant'})}
+
+async function typeLine(text, cls="", baseDelay){
+  if(STATE.panic) return; // stop ongoing typing if panic
+  const ln = document.createElement('div');
+  if(cls) ln.className = cls;
+  logEl.appendChild(ln);
+  let delay = baseDelay ?? rand(TUNE.minTypeDelay, TUNE.maxTypeDelay);
+  for(let i=0;i<text.length;i++){
+    if(STATE.panic) return; // abort mid-line on panic
+    ln.textContent += text[i];
+    if(TUNE.sfxEnabled && (text[i] !== ' ')) beep(110 + Math.random()*80, 0.012);
+    await sleep(delay);
+  }
+  scrollToBottom();
+}
+
+function println(text, cls=""){ // instant line (for fast spam)
+  if(STATE.panic && cls!=='panic') return; // only allow during panic when marked
+  const ln = document.createElement('div');
+  if(cls) ln.className = cls;
+  ln.textContent = text;
+  logEl.appendChild(ln);
+  scrollToBottom();
+}
+
+function setProgress(p){
+  const slots = 20;
+  const filled = Math.round(p*slots);
+  fill.textContent = '#'.repeat(filled).padEnd(slots, ' ');
+  pct.textContent = Math.round(p*100)+"%";
+}
+
+// ——— SFX ———
+let audioCtx;
+function ensureAudio(){ if(audioCtx) return; audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }
+function beep(freq=440, duration=0.08){
+  if(!TUNE.sfxEnabled || !audioCtx) return;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.connect(g); g.connect(audioCtx.destination);
+  o.type='square'; o.frequency.value=freq;
+  g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.2, audioCtx.currentTime+0.005);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime+duration);
+  o.start(); o.stop(audioCtx.currentTime+duration+0.01);
+}
+function errBeep(){ beep(120, .12); setTimeout(()=>beep(90,.14), 120); setTimeout(()=>beep(70,.16), 260); }
+function vibrate(ms){ if('vibrate' in navigator) navigator.vibrate(ms) }
+
+// ——— Device detection ———
+function detectOS(){
+  const ua = navigator.userAgent;
+  if(/Windows/i.test(ua)) return 'Windows';
+  if(/Mac OS X|Macintosh/i.test(ua)) return 'macOS';
+  if(/Android/i.test(ua)) return 'Android';
+  if(/iPhone|iPad|iPod/i.test(ua)) return 'iOS';
+  if(/Linux|X11/i.test(ua)) return 'Linux';
+  return 'Unknown';
+}
+function getGPU(){
+  try{
+    const c = document.createElement('canvas');
+    const gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+    if(!gl) return {vendor:'(no WebGL)', renderer:'(no WebGL)'};
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const vendor = ext? gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+    const renderer = ext? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    return {vendor, renderer};
+  }catch(e){return {vendor:'(blocked)', renderer:'(blocked)'}}
+}
+async function getBattery(){
+  try{
+    if(!('getBattery' in navigator)) return null;
+    const b = await navigator.getBattery();
+    return { level:Math.round(b.level*100), charging:b.charging, dischargingTime:b.dischargingTime };
+  }catch(e){return null}
+}
+function connInfo(){
+  const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if(!c) return null; return {type:c.effectiveType, downlink:c.downlink, rtt:c.rtt};
+}
+function deviceInfoLines(extra={}){
+  const os = detectOS();
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Unknown';
+  const mem = navigator.deviceMemory ? navigator.deviceMemory+" GB" : 'n/a';
+  const cores = navigator.hardwareConcurrency || 'n/a';
+  const {vendor, renderer} = getGPU();
+  const scrn = `${screen.width}x${screen.height} @${(window.devicePixelRatio||1)}x, ${screen.colorDepth}-bit`;
+  const ua = navigator.userAgent;
+  const lang = navigator.language || 'en';
+  const net = connInfo();
+  const lines = [
+    `Platform: ${os} (${navigator.platform||'n/a'})`,
+    `Processor: ${cores} logical cores`,
+    `Memory: ${mem}`,
+    `GPU: ${renderer} [${vendor}]`,
+    `Display: ${scrn}`,
+    `Locale: ${lang}, Timezone: ${tz}`,
+    net? `Network: ${net.type||'unknown'} ~${net.downlink||'?'}Mbps, rtt ${net.rtt||'?'}ms` : `Network: (restricted)` ,
+    `User Agent: ${ua}`,
+  ];
+  if(extra.battery){
+    const b = extra.battery; const status = b.charging? 'charging' : 'discharging';
+    lines.splice(3,0,`Battery: ${b.level}% (${status})`);
+  }
+  lines.push('Accounts: (browser-restricted)');
+  return lines;
+}
+
+// ——— Content phases ———
+const PHASES = {
+  0: async ()=>{
+    const os = detectOS();
+    hdr.textContent = os==='Android' ? 'Android Verified Boot • Maintenance Console' :
+                      os==='iOS' ? 'Secure Restore Utility' :
+                      'UEFI Maintenance Console v2.31.00';
+    await typeLine('Initializing platform…');
+    await typeLine('Checking secure environment…');
+    await typeLine('Secure boot: ENABLED');
+    if(os==='Android') await typeLine('AVB state: ORANGE (key mismatch)', 'warn');
+    else await typeLine('TPM measured boot: HASH MISMATCH', 'warn');
+    await typeLine('Probing buses: PCIe / USB / NVMe / SATA …');
+  },
+  1: async ()=>{
+    const battery = await getBattery();
+    const lines = deviceInfoLines({battery});
+    for(const l of lines){ if(STATE.panic) return; await typeLine(l) }
+    await typeLine('Enumerating storage devices…');
+    await typeLine('NVMe0: 512GB  (SMART OK)');
+    await typeLine('USB1 : Media device found');
+    await typeLine('SATA1: 1TB    (OK)');
+  },
+  2: async ()=>{
+    await typeLine('Verifying bootloader integrity…');
+    await typeLine('Bootloader signature mismatch!','err'); errBeep(); vibrate(120);
+    await typeLine('Attempting automated repair…');
+    await sleep(500);
+    await typeLine('Repair stage 1/3: Rebuilding trust chain…');
+    await typeLine('Repair stage 2/3: Restoring fallback keys…');
+    await typeLine('Repair stage 3/3: Patching recovery environment…');
+    await typeLine('[ERROR] Repair failed. Manual intervention required.','err'); errBeep(); scr.classList.add('shake'); setTimeout(()=>scr.classList.remove('shake'), 500);
+    await typeLine('Escalating to integrity sweep (read-only)…');
+    await typeLine('Scanning user partitions for tamper…');
+  },
+  3: async ()=>{
+    const os = detectOS();
+    if(os==='Android' || os==='iOS'){
+      await typeLine('Indexing media: DCIM/Camera …');
+      await typeLine('Found: 3,218 images, 412 videos');
+      await typeLine('Messaging databases: detected');
+    } else {
+      await typeLine('Indexing user profiles…');
+      await typeLine('Found: Documents (12,431 files), Pictures (3,218 items)');
+    }
+    await typeLine('Verifying system catalogs…');
+    await typeLine('Cross-checking signatures against known-good manifest…');
+    await typeLine('Anomalies detected: 2 critical, 7 low','warn');
+    await typeLine('Quarantining changes (non-destructive)…');
+  },
+  4: async ()=>{
+    await typeLine('Attempting soft-rollback to last known-good snapshot…');
+    await sleep(700);
+    await typeLine('Rollback failed: snapshot incomplete','err'); errBeep(); vibrate(200);
+    await typeLine('Switching to safe boot path…');
+    await typeLine('Status: DEGRADED  •  User action recommended','warn');
+  }
+};
+
+async function runPhases(){
+  const total = TUNE.totalDurationMs;
+  const weights = TUNE.phaseWeights;
+  for(let idx=0; idx<weights.length; idx++){
+    if(STATE.panic) return; // stop if panic triggered
+    const share = weights[idx];
+    const phaseMs = Math.round(share * total);
+    await runPhase(idx, phaseMs);
+  }
+  if(STATE.panic) return;
+  setProgress(1);
+  if(TUNE.redScreenAtEnd){
+    await sleep(400);
+    rsod.style.display='flex';
+    for(let i=0;i<4;i++){errBeep(); await sleep(180)}
+    vibrate([90,60,90,60,120]);
+  } else {
+    await typeLine('Done. Press any key to reboot.');
+  }
+}
+
+let currentProgress = 0;
+async function runPhase(idx, durationMs){
+  const start = performance.now();
+  const end = start + durationMs;
+  const phaseFillStart = currentProgress;
+  const weightSum = TUNE.phaseWeights.slice(0, idx+1).reduce((a,b)=>a+b,0);
+  const targetOverall = clamp(weightSum,0,1);
+  const targetPhaseDelta = targetOverall - currentProgress;
+  const fn = PHASES[idx];
+  const scripted = fn ? fn({}) : Promise.resolve();
+  while(performance.now() < end){
+    if(STATE.panic) return; // stop mid-phase
+    const t = (performance.now()-start)/durationMs;
+    const ease = 1 - Math.pow(1-t, 1.8);
+    let p = phaseFillStart + ease * targetPhaseDelta;
+    if(chance(TUNE.stallChance)) p -= 0.01;
+    currentProgress = clamp(p, 0, targetOverall);
+    setProgress(currentProgress);
+    await sleep(120);
+  }
+  currentProgress = targetOverall; setProgress(currentProgress);
+  await scripted;
+}
+
+// ======== Panic path on ESC -> fake factory reset -> Win boot -> Recovery ========
+async function enterPanic(){
+  if(STATE.panic) return; STATE.panic = true;
+  await typeLine('[!] User abort requested — initiating factory reset…','err');
+  errBeep(); vibrate([180,120,180]);
+  scr.classList.add('glitch'); setTimeout(()=>scr.classList.remove('glitch'), 1000);
+  await sleep(350);
+  logEl.innerHTML = '';
+  await typeLine('Checking factory reset protocols…');
+  await typeLine('Secure wipe: ARMED (verification pending)');
+  await typeLine('Verifying rollback indexes…');
+  await typeLine('Locking user partitions (read-only)…');
+  startPanicCountdown(20);
+  spamCommands(9000); screenFlicker(9000); await sleep(9500);
+  spamCommands(7000); screenFlicker(7000); await sleep(7200);
+  showWinBootSequence();
+}
+
+function randomCmd(){
+  const cmds = [
+    'dism /online /cleanup-image /restorehealth',
+    'sfc /scannow',
+    'chkdsk C: /f /r /x',
+    'bootrec /fixmbr',
+    'bootrec /fixboot',
+    'bootrec /rebuildbcd',
+    'reagentc /enable',
+    'bcdedit /enum all',
+    'icacls C:\\ /grant SYSTEM:(OI)(CI)F /T',
+    'takeown /F C:\\ /R /D Y',
+    'wevtutil cl System',
+    'cipher /w:C\\',
+    'reg add HKLM\\SOFTWARE\\Policies /v Enforce /t REG_DWORD /d 1 /f',
+    'powercfg /h off',
+  ];
+  const hex = '0x'+Math.floor(Math.random()*0xffffffff).toString(16).padStart(8,'0');
+  const pct = Math.floor(Math.random()*100)+'%';
+  const files = ['ntoskrnl.exe','winload.efi','BCD','system32\\drivers\\disk.sys','config\\SYSTEM'];
+  const pick = cmds[Math.floor(Math.random()*cmds.length)];
+  const file = files[Math.floor(Math.random()*files.length)];
+  const msgs = [
+    `${pick}`,
+    `verifying ${file} … ${pct}`,
+    `writing ${hex} -> ${file}`,
+    `hash:${Math.random().toString(36).slice(2,10)}${Math.random().toString(36).slice(2,10)}`,
+    `rollback index ${Math.floor(Math.random()*10)}: OK`,
+    `MBR@${hex} patched`,
+  ];
+  return msgs[Math.floor(Math.random()*msgs.length)];
+}
+
+async function spamCommands(durationMs){
+  const end = performance.now()+durationMs;
+  while(performance.now() < end){
+    println(randomCmd(),'panic');
+    if(Math.random()<0.2){ scr.classList.add('glitch'); setTimeout(()=>scr.classList.remove('glitch'), 140); }
+    await sleep(16 + Math.random()*24);
+  }
+}
+
+function screenFlicker(durationMs){
+  document.body.classList.add('flash');
+  setTimeout(()=>document.body.classList.remove('flash'), durationMs);
+}
+
+function startPanicCountdown(sec){
+  panicCounter.style.display='block';
+  let t = sec;
+  function fmt(n){ return String(n).padStart(2,'0') }
+  panicCounter.textContent = `00:${fmt(t)}`;
+  const iv = setInterval(()=>{
+    t--; panicCounter.textContent = `00:${fmt(Math.max(0,t))}`;
+    if(t<=0){ clearInterval(iv); }
+  },1000);
+}
+
+function showWinRE(){
+  document.documentElement.style.background = '#0C59A4';
+  rsod.style.display='none';
+  winboot.style.display='none';
+  winre.style.display='flex';
+  const steps = [
+    {t:1600, body:'Your PC did not start correctly.<br>Press <b>Restart</b> to restart your PC, which can sometimes fix the problem. You can also press <b>Advanced options</b> to try other options to repair your PC.'},
+    {t:2200, body:'Automatic Repair couldn\\'t repair your PC.<br>Press <b>Advanced options</b> to try other options to repair your PC, or <b>Restart</b> to try again.'}
+  ];
+  (async()=>{
+    for(const s of steps){ document.getElementById('reBody').innerHTML = s.body; await sleep(s.t); }
+  })();
+}
+
+async function showWinBootSequence(){
+  rsod.style.display='none';
+  winre.style.display='none';
+  winboot.style.display='flex';
+  const msg = document.getElementById('bootMsg');
+  const sub = document.getElementById('bootSub');
+  const seq = [
+    {t:2400, m:'Preparing Automatic Repair'},
+    {t:4200, m:'Diagnosing your PC'},
+    {t:3600, m:'Attempting repairs'}
+  ];
+  for(const s of seq){ msg.textContent = s.m; await sleep(s.t); }
+  showWinRE();
+}
+
+// ======== Blocking & Escape logic (best-effort) ========
+let prankActive = false;
+let ctrlXCount = 0, ctrlXTimer = null;
+
+async function tryKeyboardLock(){
+  if(!('keyboard' in navigator) || !navigator.keyboard.lock) return false;
+  try{
+    await navigator.keyboard.lock(['F5','F11','Tab','Escape','r','R','F1','F2','F3','F4','F12','ContextMenu','Meta']);
+    return true;
+  }catch(err){ return false; }
+}
+
+function onKeyDownCapture(e){
+  if(!prankActive) return;
+
+  // Ctrl+X x3 exit is the ONLY escape
+  if(e.ctrlKey && !e.altKey && !e.metaKey && (e.key==='x' || e.key==='X')){
+    e.preventDefault(); e.stopPropagation();
+    ctrlXCount++; clearTimeout(ctrlXTimer);
+    ctrlXTimer = setTimeout(()=> ctrlXCount = 0, 900);
+    if(ctrlXCount >= 3){ endPrank(); }
+    return;
+  }
+
+  if(e.key === 'Escape'){
+    e.preventDefault(); e.stopImmediatePropagation();
+    enterPanic();
+    return;
+  }
+
+  if(e.key==='Meta' || e.key==='OS' || e.key==='Win'){
+    try{ e.preventDefault(); e.stopImmediatePropagation(); }catch(_){}
+    errBeep(); return;
+  }
+  const blocked = (
+    (e.ctrlKey && (['r','R','w','t','n'].includes(e.key))) ||
+    (e.key==='F5') || (e.key==='F11') || (e.key==='F12') || (e.key==='F4' && e.altKey)
+  );
+  if(blocked){ try{ e.preventDefault(); e.stopImmediatePropagation(); }catch(_){} errBeep(); return; }
+}
+window.addEventListener('keydown', onKeyDownCapture, true);
+
+// Disable context menus/selection for immersion
+window.addEventListener('contextmenu', e=>{ if(prankActive){ e.preventDefault(); e.stopPropagation(); } }, true);
+window.addEventListener('selectstart', e=>{ if(prankActive){ e.preventDefault(); e.stopPropagation(); } }, true);
+window.addEventListener('dragstart', e=>{ if(prankActive){ e.preventDefault(); e.stopPropagation(); } }, true);
+
+function endPrank(){
+  prankActive = false; STATE.panic = false;
+  window.removeEventListener('keydown', onKeyDownCapture, true);
+  rsod.style.display='none'; winre.style.display='none';
+  gate.style.display='none';
+  document.body.innerHTML = '<div style="color:#8aff8a;font-family:Courier New, monospace;padding:24px">Prank ended. Nothing on this device was touched. 👌</div>';
+}
+
+// Detect leaving/focus loss to escalate
+let leaveCount = 0;
+document.addEventListener('visibilitychange', ()=>{
+  if(!prankActive) return;
+  if(document.hidden){ leaveCount++; println(`[!] Focus lost (${leaveCount}) — integrity hold in place...`, 'warn'); errBeep(); }
+  else { if(leaveCount>0){ println('Unauthorized focus loss detected — escalating containment…', 'err'); rsod.style.display='flex'; setTimeout(()=> rsod.style.display='none', 2400); errBeep(); } }
+});
+window.addEventListener('blur', ()=>{ if(prankActive){ println('[!] Window blurred — external UI opened', 'warn'); errBeep(); }});
+window.addEventListener('focus', ()=>{ if(prankActive){ println('[i] Focus restored', 'dim'); }});
+
+document.addEventListener('fullscreenchange', ()=>{
+  if(prankActive && !document.fullscreenElement){ try{ document.documentElement.requestFullscreen(); }catch(_){} }
+});
+
+const cur = document.getElementById('cur');
+
+// Start the prank after user gesture
+(startBtn ? startBtn : document).addEventListener('click', async (ev)=>{
+  if(startBtn && ev.target !== startBtn) return;
+  try{ ensureAudio(); if(audioCtx && audioCtx.state === 'suspended'){ await audioCtx.resume(); } }catch(e){}
+  try{ if(document.documentElement.requestFullscreen){ await document.documentElement.requestFullscreen(); } }catch(e){}
+  tryKeyboardLock();
+  if(gate) gate.style.display='none';
+  prankActive = true;
+  setTimeout(()=> runPhases(), 300);
+});
+
+// Basic runtime error logger to screen
+window.addEventListener('error', (e)=>{
+  const ln = document.createElement('div');
+  ln.style.color = '#ffb3b3'; ln.textContent = '[runtime] ' + (e.message || 'error');
+  logEl && logEl.appendChild(ln);
+});
+</script>
+</body>
+</html>
